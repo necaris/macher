@@ -17,7 +17,8 @@ resource "github_repository" "default" {
   name       = var.github_repository_name
   visibility = "public"
 
-  description = "Project-aware LLM implementation toolset for Emacs"
+  description = "Project-aware multi-file LLM editing for Emacs, based on gptel."
+  topics      = ["emacs", "gptel", "llm"]
 
   vulnerability_alerts = true
 
