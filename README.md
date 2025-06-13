@@ -18,7 +18,7 @@ The LLM receives contextual information about the current project and file, as w
 additional project context.
 
 macher is a lightweight Emacs-native take on the editing workflows of more full-featured tools like
-[aider](https://aider.chat/) or [Plandex](https://plandex.ai/). It works with any gptel backend that
+[Aider](https://aider.chat/) or [Plandex](https://plandex.ai/). It works with any gptel backend that
 supports tool use, and aims for a nonintrusive and easily-customizable UX. Your existing gptel
 configuration gets extended when making macher requests, so you can use it alongside other tools.
 
