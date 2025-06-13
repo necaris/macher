@@ -48,7 +48,7 @@
 ;; Avoid warnings about the python indent level.
 (setopt python-indent-guess-indent-offset-verbose nil)
 
-;;; 'gptel' Setup
+;;; LLM Setup
 
 (require 'gptel)
 (setopt gptel-log-level 'info)
@@ -60,16 +60,10 @@
 ;; (setq gptel-backend
 ;;       (gptel-make-ollama "Ollama" :host "localhost:11434" :stream t :models `(,gptel-model)))
 
-;;; 'macher' Setup
-
 (require 'macher)
 
 ;; Focus the diff buffer on display for easier automation.
-(let ((orig-patch-ready-fn macher-patch-ready-function))
-  (setopt macher-patch-ready-function
-          (lambda (&rest args)
-            (apply orig-patch-ready-fn args)
-            (select-window (get-buffer-window)))))
+(add-hook 'macher-patch-ready-hook (lambda () (select-window (get-buffer-window))))
 
 ;;; Helper Functions for Screen Recording
 
