@@ -39,6 +39,9 @@
          (window-height . ,height)
          (window-width . ,window-width))))))
 
+;; Don't show additional coloring for line-level edits.
+(setopt diff-refine nil)
+
 ;; Recognize demo projects with a marker file.
 (setopt project-vc-extra-root-markers '(".project"))
 
