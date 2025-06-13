@@ -3,6 +3,8 @@
 A project-aware LLM implementation toolset for Emacs, built on
 [gptel](https://github.com/karthink/gptel).
 
+https://github.com/user-attachments/assets/634b4275-58c9-43bc-a066-5b3b94b41e7c
+
 ## What is macher?
 
 **macher** provides multi-file, project-aware LLM editing capabilities within Emacs. It allows you
