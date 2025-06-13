@@ -29,6 +29,7 @@ The API is still very much under development and subject to change.
 Example configuration with elpaca + `use-package` integration:
 
 ```elisp
+;; Make sure gptel is also installed and configured.
 (use-package macher
   :ensure (:host github :repo "kmontag/macher")
   :hook
