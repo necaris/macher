@@ -1,0 +1,58 @@
+---
+name: Lint & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress jobs when a new workflow run is triggered.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Eask dependencies are installed via an npm postinstall hook, so Emacs needs to be installed
+      # first.
+      - name: Setup Emacs
+        uses: purcell/setup-emacs@v6.0
+        with:
+          version: 30.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # Note this also starts the ollama server.
+      - name: Install Ollama
+        uses: ai-action/setup-ollama@v1
+
+      # See https://github.com/ai-action/setup-ollama/issues/40.
+      - name: Cache Ollama
+        id: cache-artifacts
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama
+          key: ${{ runner.os }}-ollama
+
+      - name: Pull Ollama model
+        run: |
+          MODEL_NAME=$(grep -o 'macher-test--gptel-model "[^"]*"' test/macher-functional-tests.el | cut -d'"' -f2)
+          ollama pull "$MODEL_NAME"
+
+      - name: Run linting
+        run: make lint
+
+      - name: Run tests
+        run: make test
