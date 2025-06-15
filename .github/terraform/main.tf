@@ -36,10 +36,11 @@ resource "github_repository" "default" {
   # Clean up branches after merge.
   delete_branch_on_merge = true
 
-  has_downloads = true
-  has_issues    = true
-  has_projects  = false
-  has_wiki      = false
+  has_discussions = true
+  has_downloads   = true
+  has_issues      = true
+  has_projects    = false
+  has_wiki        = false
 
   lifecycle {
     prevent_destroy = true
@@ -47,7 +48,7 @@ resource "github_repository" "default" {
 }
 
 data "github_rest_api" "rulesets" {
-  endpoint = "/repos/${var.github_owner}/${github_repository.default.name}/rulesets"
+  endpoint = "/repos/${var.github_owner}/${var.github_repository_name}/rulesets"
 
   lifecycle {
     postcondition {
