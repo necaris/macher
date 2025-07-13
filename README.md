@@ -3,7 +3,7 @@
 A project-aware LLM implementation toolset for Emacs, built on
 [gptel](https://github.com/karthink/gptel).
 
-https://github.com/user-attachments/assets/c9488e7a-db4c-4c40-a5c0-6da0ee089c45
+https://github.com/user-attachments/assets/82c822fe-35e9-47a2-87db-b4dba2432d1b
 
 ## What is macher?
 
@@ -69,7 +69,7 @@ Example configuration with elpaca + `use-package` integration:
 1. **Request revisions** if needed with `M-x macher-revise`.
 
 You can also use macher commands when editing files that aren't part of a project - see
-_[workspaces](#keyconcepts)_.
+_[workspaces](#key-concepts)_.
 
 ### Main commands
 
@@ -86,11 +86,7 @@ After calling `(macher-install)`, you can use macher functionality in any gptel 
 - `@macher-ro`: Read-only - workspace context + tools to read files only
 - `@macher-notools`: Context only - workspace information without tools
 
-For example, in any gptel buffer you can type:
-
-```
-@macher create an eslint configuration with sensible defaults for this project
-```
+https://github.com/user-attachments/assets/9b3e0734-5907-4e01-a356-6f9066d7b844
 
 ## Details
 
