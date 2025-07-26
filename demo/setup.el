@@ -52,27 +52,6 @@
    (term-send-string (get-buffer-process (current-buffer)) "export PYTHONUNBUFFERED=1\n")
    (term-send-string (get-buffer-process (current-buffer)) "clear\n")))
 
-;; Configure macher buffer placement.
-(let* ((window-width 0.5)
-       (request-window-height 0.3)
-       ;; (pattern slot height)
-       (buffer-configs
-        `(("\\*macher:.*\\*" 0 ,request-window-height)
-          ("\\*macher-patch:.*\\*" 1 ,(- 1 request-window-height))
-          ("\\*Claude\\*" 0 ,request-window-height))))
-  (dolist (config buffer-configs)
-    (let ((pattern (nth 0 config))
-          (slot (nth 1 config))
-          (height (nth 2 config)))
-      (add-to-list
-       'display-buffer-alist
-       `(,pattern
-         (display-buffer-in-side-window)
-         (side . right)
-         (slot . ,slot)
-         (window-height . ,height)
-         (window-width . ,window-width))))))
-
 ;; Don't show additional coloring for line-level edits.
 (setopt diff-refine nil)
 
@@ -92,8 +71,6 @@
 (setopt gptel-default-mode 'org-mode)
 (setopt gptel-include-tool-results t)
 (setopt gptel-log-level 'info)
-(setopt gptel-model 'claude-sonnet-4-20250514)
-(setq gptel-backend (gptel-make-anthropic "Claude" :key (getenv "ANTHROPIC_API_KEY") :stream nil))
 (setq
  gptel--system-message
  (concat
@@ -121,7 +98,9 @@
   "Pay attention to using correct JSON formatting when calling tools - "
   "MAKE SURE your arrays are properly closed."))
 
-;; (setopt gptel-model 'devstral)
+(setopt gptel-model 'claude-sonnet-4-20250514)
+(setq gptel-backend (gptel-make-anthropic "Claude" :key (getenv "ANTHROPIC_API_KEY") :stream nil))
+;; (setopt gptel-model 'llama3.3:70b)
 ;; (setq gptel-backend
 ;;       (gptel-make-ollama "Ollama" :host "localhost:11434" :stream t :models `(,gptel-model)))
 
@@ -131,6 +110,27 @@
 
 ;; Focus the diff buffer on display for easier automation.
 (add-hook 'macher-patch-ready-hook (lambda () (select-window (get-buffer-window))) 1)
+
+;; Configure macher buffer placement.
+(let* ((window-width 0.5)
+       (request-window-height 0.3)
+       ;; (pattern slot height)
+       (buffer-configs
+        `(("\\*macher:.*\\*" 0 ,request-window-height)
+          ("\\*macher-patch:.*\\*" 1 ,(- 1 request-window-height))
+          (,(concat "\\*" (gptel-backend-name gptel-backend) "\\*") 0 ,request-window-height))))
+  (dolist (config buffer-configs)
+    (let ((pattern (nth 0 config))
+          (slot (nth 1 config))
+          (height (nth 2 config)))
+      (add-to-list
+       'display-buffer-alist
+       `(,pattern
+         (display-buffer-in-side-window)
+         (side . right)
+         (slot . ,slot)
+         (window-height . ,height)
+         (window-width . ,window-width))))))
 
 ;;; Helper Functions for Screen Recording
 
