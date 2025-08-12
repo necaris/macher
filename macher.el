@@ -36,6 +36,7 @@
 (require 'gptel)
 (require 'gptel-context)
 (require 'cl-lib)
+(require 'macher-externals)
 
 ;;; Preliminary definitions needed for defcustom defaults
 
@@ -313,13 +314,32 @@ different function, this value will have no effect."
   :group 'macher)
 
 (defcustom macher-process-request-function #'macher--process-request
-  "Function to handle changes during the macher request lifecycle.
+  "Function to take action based on the current state of a macher request.
 
-This function is called with two arguments:
+This function is called when requests involving macher tools are
+completed (with success or error), or manually via
+`macher-process-request' and variants.
 
-- CONTEXT: the 'macher-context' for the current request.
+By default, this function prepares and displays the patch buffer if the
+request contains any edits.
 
-- FSM: the 'gptel-fsm' (state machine) for the current request.
+The function is called with three arguments:
+
+- REASON: the reason that the processing function is being invoked.
+  Currently this can be:
+
+  - The symbol 'complete' - when invoked at the end of the request
+    lifecycle.
+
+  - The symbol 'interactive' - when `macher-process-request' is invoked
+    interactively.
+
+  - any custom value passed to `macher-process-request'
+    programmatically.
+
+- CONTEXT: the 'macher-context' for the request.
+
+- FSM: the 'gptel-fsm' (state machine) for the request.
 
 This function is only called for requests that actually create a
 'macher-context', i.e. requests with macher tools of some sort. The
@@ -327,10 +347,7 @@ This function is only called for requests that actually create a
 
 The value of this variable will be stored at request-time and used
 throughout a particular request. This enables custom handling on a
-per-request basis.
-
-By default, this function prepares and processes the patch buffer if any
-edits were made during the request.")
+per-request basis.")
 
 (defcustom macher-patch-prepare-functions
   '(macher--patch-prepare-diff macher--patch-prepare-metadata)
@@ -563,6 +580,13 @@ workspace is loaded into in-memory editing buffers.")
 ;; Prevent the stored workspace from being cleared when changing major modes. See
 ;; `kill-all-local-variables'.
 (put 'macher--workspace 'permanent-local t)
+
+(defvar-local macher--fsm-latest nil
+  "The most recent macher FSM for the current buffer.
+
+This is set at the beginning of each macher request and can be used
+to access the FSM associated with the request even after it completes
+or is aborted.")
 
 ;;; Context Structure
 
@@ -1102,18 +1126,37 @@ displays the patch buffer."
   (with-current-buffer (current-buffer)
     (display-buffer (current-buffer))))
 
-(defun macher--process-request (context fsm)
+(defun macher--process-request (reason context fsm)
   "Process the macher CONTEXT throughout the request lifecycle.
 
-CONTEXT is the 'macher-context' for the current request.
+This is the default implementation of 'macher-process-request-function'.
+It uses the 'macher-patch-prepare-functions' and the
+'macher-patch-ready-hook' to create/handle a patch based on the changes
+made during the request.
 
-FSM is the 'gptel-fsm' (state machine) for the current request.
+REASON is the reason that the processing function is being invoked. This
+argument is currently ignored.
 
-This is the default implementation of 'macher-process-request-function'."
+CONTEXT is the 'macher-context' for the request being processed.
+
+FSM is the 'gptel-fsm' (state machine) for the request being processed."
   (when context
     ;; Check if any changes were made during the request using the dirty-p flag.
     (when (macher-context-dirty-p context)
       (macher--build-patch context fsm))))
+
+(defun macher--context-for-fsm (fsm)
+  "Extract the macher context from the FSM, if any.
+
+FSM is a 'gptel-fsm' (state machine) for a request.
+
+Returns the 'macher-context' object if the FSM has macher tools, nil otherwise."
+  (when fsm
+    (let* ((info (gptel-fsm-info fsm))
+           (tools (plist-get info :tools)))
+      ;; Look through the FSM's tools for one with a macher context.
+      (when tools
+        (cl-some #'macher--tool-context tools)))))
 
 (defun macher--build-patch (context fsm)
   "Run the 'macher-patch-prepare-functions' and the 'macher-patch-ready-hook'.
@@ -3246,11 +3289,16 @@ Returns the updated preset spec."
       preset)))
 
 (defun macher--make-context-for-preset (preset)
-  "Create a 'macher-context' and add a termination handler to the PRESET spec.
+  "Create a 'macher-context' and add appropriate transforms to the PRESET spec.
 
 PRESET is a plist containing at least the existing
 :prompt-transform-functions for this preset; the new preset will append
 to this list.
+
+The added transforms will handle setting up the
+'macher-context' (storing the prompt and preloading files from the
+context), hooking into the request lifecycle to process the request on
+completion, and storing the outgoing FSM in 'macher--fsm-latest'.
 
 Returns a cons cell (macher-context . updated-preset).
 
@@ -3258,31 +3306,47 @@ If no workspace can be determined from the current buffer, returns (nil
 . preset) with no modifications"
 
   (if-let ((workspace (macher-workspace)))
-    (let* ((context
-            (macher--make-context
-             :workspace workspace
-             :process-request-function macher-process-request-function))
+    (let* ((context (macher--make-context :workspace workspace))
            (prompt-transforms (plist-get preset :prompt-transform-functions))
+
+           ;; Handler for the first state machine transtion, i.e. as soon as the request is sent.
+           (transition-handler-invoked nil)
+           (transition-handler
+            (lambda (fsm)
+              (unless transition-handler-invoked
+                (with-current-buffer (plist-get (gptel-fsm-info fsm) :buffer)
+                  ;; It's better to set 'macher--fsm-latest' in a transition handler rather than
+                  ;; immediately in a prompt transformer, since the latter can also be used when not
+                  ;; actually sending requests, e.g. when inspecting an outgoing query.
+                  (setq macher--fsm-latest fsm))
+                ;; Only allow this function to be called once.
+                (setq transition-handler-invoked t))))
+
+           ;; Handler for the end of the request.
            (termination-handler
             (lambda (fsm)
               "Process termination of a macher request."
-              (let ((process-fn (macher-context-process-request-function context)))
-                (when process-fn
-                  (funcall process-fn context fsm)))))
+              (macher-process-request 'complete fsm)))
 
-           ;; Transform to capture the prompt and store it on the context.
-           (prompt-transform-store-prompt
-            (lambda (_fsm) (setf (macher-context-prompt context) (buffer-string))))
+           ;; Transform to capture the prompt and other contextual information, and store it on the
+           ;; context.
+           (prompt-transform-store-context-data
+            (lambda (_fsm)
+              (setf (macher-context-prompt context) (buffer-string))
+              (setf (macher-context-process-request-function context)
+                    macher-process-request-function)))
 
            ;; Transform to preload files from the gptel context into the macher context.
            (prompt-transform-preload-context
             (lambda (_fsm) (macher--load-gptel-context-files (gptel-context--collect) context)))
 
+           ;; Transform to store the FSM locally as soon as the state machine transitions.
+           (prompt-transform-transition-handler
+            (lambda (fsm) (macher--add-transition-handler fsm transition-handler)))
+
            ;; Transform to hook into the request lifecycle with our callback.
            (prompt-transform-termination-handler
-            (lambda (callback fsm)
-              (macher--partial-prompt-transform-add-termination-handler
-               termination-handler callback fsm)))
+            (lambda (fsm) (macher--add-termination-handler fsm termination-handler)))
 
            ;; Global transforms list including our custom ones. Note that our custom transforms
            ;; won't actually modify the prompt - they're simply there to capture information and
@@ -3290,10 +3354,13 @@ If no workspace can be determined from the current buffer, returns (nil
            (updated-prompt-transforms
             (append
              prompt-transforms
+             ;; Add these after the earlier prompt transforms, to ensure that all presets and other
+             ;; modifications from other transforms have already been applied.
              (list
-              prompt-transform-store-prompt
+              prompt-transform-store-context-data
               prompt-transform-preload-context
-              prompt-transform-termination-handler))))
+              prompt-transform-termination-handler
+              prompt-transform-transition-handler))))
       ;; Return the context and the updated preset.
       (cons
        context
@@ -3481,27 +3548,19 @@ in the same place as the default gptel context as specified by
       (gptel-context--wrap-in-buffer workspace-string)))
   (funcall callback))
 
-;; Note it's not really necessary in this to use the async form with a CALLBACK argument, but this
-;; three-argument signature makes it a (maybe) bit more obvious/foolproof that this can't just be
-;; used as a transform function directly.
-(defun macher--partial-prompt-transform-add-termination-handler (handler callback fsm)
-  "A partializable prompt transform to call HANDLER when the request terminates.
-
-To use this as an actual prompt transform, wrap it in a two-argument
-lambda. Note that gptel checks the function arity to determine the call
-signature, so things like `apply-partially' can't be used as they don't
-preserve arity.
+(defun macher--add-termination-handler (fsm handler)
+  "Update FSM's state handlers to call HANDLER when the request terminates.
 
 The HANDLER will receive one argument when the request terminates
 successfully or otherwise:
 
-- FSM: the FSM for the request (the same one passed to this function).
-  This can be used to extract a more specific termination reason - for
-  example, standard gptel requests will end up in the the 'DONE or 'ERRS
-  state, which can be extracted from the FSM.
+- FSM: the 'gptel-fsm' struct for the request (the same one passed to
+  this function). This can be used to extract a more specific
+  termination reason - for example, standard gptel requests will end up
+  in the the 'DONE or 'ERRS state, which can be extracted from the FSM.
 
-The CALLBACK and FSM arguments are as described in the
-'gptel-prompt-transform-functions' documentation."
+The request is considered to have terminated when the FSM reaches a
+state with no possible transitions to another state."
   (let* (
          ;; An alist of states mapped to potential next states. See 'gptel-request--transitions'.
          (transitions (gptel-fsm-table fsm))
@@ -3530,19 +3589,13 @@ The CALLBACK and FSM arguments are as described in the
                (or (null entry) (null (cdr entry)))))
            all-states))
 
-         ;; The handler to add when the FSM reaches a terminal state.
-         (termination-handler
-          (lambda (fsm)
-            "macher FSM termination handler."
-            (funcall handler fsm)))
-
          ;; Alist whose keys are the terminal states, and values are their new lists of handlers.
          (terminal-state-handlers
           (cl-loop
            for state in terminal-states for existing-entry = (assq state handlers) collect
            (if existing-entry
-               (cons state (append (cdr existing-entry) (list termination-handler)))
-             (cons state (list termination-handler)))))
+               (cons state (append (cdr existing-entry) (list handler)))
+             (cons state (list handler)))))
 
          ;; Create a new handlers list for this FSM.
          (augmented-handlers
@@ -3553,9 +3606,50 @@ The CALLBACK and FSM arguments are as described in the
            terminal-state-handlers)))
 
     ;; Update the handlers list.
-    (setf (gptel-fsm-handlers fsm) augmented-handlers))
+    (setf (gptel-fsm-handlers fsm) augmented-handlers)))
 
-  (funcall callback))
+(defun macher--add-transition-handler (fsm handler)
+  "Update FSM's state handlers to call HANDLER on every state transition.
+
+The HANDLER will receive one argument:
+
+- FSM: the FSM for the request (the same one passed to this function).
+  This can be used to extract the current state and other information
+  about the transition.
+
+The handler will be called once for each state transition throughout the
+request lifecycle."
+  (let* (
+         ;; An alist of states mapped to potential next states. See 'gptel-request--transitions'.
+         (transitions (gptel-fsm-table fsm))
+
+         ;; An alist of states mapped to their handler functions.
+         (handlers (gptel-fsm-handlers fsm))
+
+         ;; Find all states that can possibly be transitioned to.
+         (all-states
+          (cl-remove-duplicates
+           (cl-mapcan (lambda (entry) (mapcar #'cdr (cdr entry))) transitions)))
+
+         ;; Alist whose keys are all available states, and values are their new lists of handlers.
+         (all-state-handlers
+          (cl-loop
+           for state in all-states for existing-entry = (assq state handlers) collect
+           (if existing-entry
+               (cons state (append (cdr existing-entry) (list handler)))
+             (cons state (list handler)))))
+
+         ;; Create a new handlers list for this FSM.
+         (augmented-handlers
+          (append
+           ;; Copy existing handlers for states not in all-states.
+           (cl-remove-if (lambda (entry) (member (car entry) all-states)) handlers)
+           ;; Add our state handlers for all states.
+           all-state-handlers)))
+
+    ;; Update the handlers list.
+    (setf (gptel-fsm-handlers fsm) augmented-handlers)))
+
 
 (defun macher--gptel-request (callback &optional prompt &rest keys)
   "Send PROMPT to the LLM and invoke the CALLBACK when the request terminates.
@@ -3572,8 +3666,6 @@ successfully or otherwise:
   example, standard gptel requests will end up in the the 'DONE or 'ERRS
   state, which can be extracted using `gptel-fsm-state'.
 
-described in `macher--partial-prompt-transform-add-termination-handler'.
-
 This is a thin wrapper around `gptel-request'. The PROMPT and KEYS will
 be passed directly to `gptel-request'. Note that the CALLBACK parameter
 here is different than the :callback key accepted by `gptel-request',
@@ -3588,12 +3680,12 @@ which might also be included."
          ;; the end of the request lifecycle.
          (prompt-transform
           (when callback
-            (lambda (cb fsm)
-              (macher--partial-prompt-transform-add-termination-handler
+            (lambda (fsm)
+              (macher--add-termination-handler
+               fsm
                (lambda (fsm)
                  "Invoke the user-provided callback after the FSM reached a terminal state"
-                 (funcall callback nil fsm))
-               cb fsm))))
+                 (funcall callback nil fsm))))))
 
          ;; Transforms list including our callback transform.
          (updated-transforms
@@ -3827,6 +3919,48 @@ BUF defaults to the current buffer if not specified."
     (when-let* ((action-buffer (macher-action-buffer))
                 (_ (buffer-live-p action-buffer)))
       (gptel-abort action-buffer))))
+
+;;;###autoload
+(defun macher-process-request (reason &optional fsm)
+  "Process (e.g. display a patch for) the latest macher request.
+
+Extracts the macher context from the FSM and calls the configured
+'macher-process-request-function'. You can use this, for example, to
+show the patch associated with an in-progress or aborted request.
+
+REASON is the reason that the processing function is being invoked. This
+will be forwarded to the 'macher-process-request-function'. Defaults to
+'interactive when called interactively, or any custom value can be
+provided.
+
+FSM is an optional 'gptel-fsm' (state machine) for the request. If not
+provided, defaults the most recent macher request for the current
+buffer (i.e. the local value of 'macher--fsm-latest')."
+  (interactive (list 'interactive))
+  (when-let* ((fsm (or fsm macher--fsm-latest))
+              (context (macher--context-for-fsm fsm))
+              (process-request-fn (macher-context-process-request-function context)))
+    (funcall process-request-fn reason context fsm)))
+
+;;;###autoload
+(defun macher-process-request-dwim (reason)
+  "Process the latest macher request for the current buffer or the action buffer.
+
+REASON is the reason that the processing function is being invoked.
+Defaults to 'interactive when called interactively, or any custom value
+can be provided.
+
+This function processes the most recent macher request in the current
+buffer (i.e. the local value of 'macher--fsm-latest') if present,
+otherwise uses the most recent macher request in the action buffer
+associated with the current workspace."
+  (interactive (list 'interactive))
+  (let ((fsm
+         (or macher--fsm-latest
+             (when-let ((action-buffer (macher-action-buffer)))
+               (buffer-local-value 'macher--fsm-latest action-buffer)))))
+    (macher-process-request reason fsm)))
+
 
 ;;; Convenience methods for built-in actions.
 
