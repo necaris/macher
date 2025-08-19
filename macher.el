@@ -3096,9 +3096,10 @@ IS-SELECTED specifies whether the input comes from the selected region."
            (t
             (let* ((lang
                     (downcase
-                     (if (stringp mode-name)
-                         mode-name
-                       (car mode-name)))))
+                     (if-let* ((mode-string (format "%s" major-mode))
+                               (match-index (string-match "-mode$" mode-string)))
+                         (substring mode-string 0 match-index)
+                       (format-mode-line mode-name)))))
               (format (concat
                        "The request was sent from the %s file `%s` in the workspace. "
                        "If the request text appears as a comment or placeholder in the file, "
