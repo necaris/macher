@@ -4518,6 +4518,68 @@
          (length (gptel-fsm-handlers fsm))
          :to-be-greater-than (length original-fsm-handlers)))))
 
+  (describe "macher--implement-prompt"
+    :var (temp-file)
+
+    (before-each
+      (setq temp-file (make-temp-file "macher-test" nil ".js"))
+      ;; Write some content to the file.
+      (with-temp-buffer
+        (insert "// Test JavaScript file\nfunction test() {}\n")
+        (write-region (point-min) (point-max) temp-file)))
+
+    (after-each
+      (when (file-exists-p temp-file)
+        (delete-file temp-file)))
+
+    (it "includes gptel--strip-mode-suffix result for common modes"
+      ;; Test with a JavaScript file to verify language detection.
+      (with-temp-buffer
+        (find-file temp-file)
+        ;; Use a mode that's specifically handled by gptel--strip-mode-suffix.
+        (sh-mode)
+        ;; Set the buffer-local workspace variable.
+        (setq-local macher--workspace (cons 'file temp-file))
+        (let ((prompt (macher--implement-prompt "Add error handling" nil)))
+          ;; The prompt should contain "Javascript" (or similar) as the language.
+          ;; This verifies that our condition-case approach works correctly.
+          (expect prompt :to-match "Shell")
+          (expect prompt :to-match "Add error handling")
+          (expect prompt :to-match "IMPLEMENTATION REQUEST"))))
+
+    (it "falls back to mode-name when gptel--strip-mode-suffix fails"
+      ;; Temporarily override gptel--strip-mode-suffix to simulate an error.
+      (spy-on 'gptel--strip-mode-suffix :and-call-fake (lambda (&rest _) (error "Simulated error")))
+      (with-temp-buffer
+        (find-file temp-file)
+        (js-mode)
+        ;; Set the buffer-local workspace variable.
+        (setq-local macher--workspace (cons 'file temp-file))
+        (let ((prompt (macher--implement-prompt "Add error handling" nil)))
+          ;; Should fall back to using mode-name format.
+          (expect prompt :to-be-truthy)
+          (expect prompt :to-match "Add error handling")
+          ;; Should not contain the error itself.
+          (expect prompt :not :to-match "Simulated error"))))
+
+    (it "handles case where gptel--strip-mode-suffix doesn't exist"
+      ;; Temporarily undefine gptel--strip-mode-suffix.
+      (let ((original-function (symbol-function 'gptel--strip-mode-suffix)))
+        (unwind-protect
+            (progn
+              (fmakunbound 'gptel--strip-mode-suffix)
+              (with-temp-buffer
+                (find-file temp-file)
+                (js-mode)
+                ;; Set the buffer-local workspace variable.
+                (setq-local macher--workspace (cons 'file temp-file))
+                (let ((prompt (macher--implement-prompt "Add error handling" nil)))
+                  ;; Should still work by falling back to mode-name.
+                  (expect prompt :to-be-truthy)
+                  (expect prompt :to-match "Add error handling"))))
+          ;; Restore the original function.
+          (fset 'gptel--strip-mode-suffix original-function)))))
+
   (describe "macher--resolve-workspace-path"
     :var
     (temp-workspace-root
