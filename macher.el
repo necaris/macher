@@ -3095,10 +3095,13 @@ IS-SELECTED specifies whether the input comes from the selected region."
            ;; Regular file case.
            (t
             (let* ((lang
-                    (downcase
-                     (if (stringp mode-name)
-                         mode-name
-                       (car mode-name)))))
+                    ;; Use gptel's internal mode formatting method, with a fallback on error in case
+                    ;; the method gets removed or the signature changes (errors should also be
+                    ;; picked up by tests, so we'll notice such a change eventually).
+                    (condition-case nil
+                        (gptel--strip-mode-suffix major-mode)
+                      (error
+                       (format-mode-line mode-name)))))
               (format (concat
                        "The request was sent from the %s file `%s` in the workspace. "
                        "If the request text appears as a comment or placeholder in the file, "
